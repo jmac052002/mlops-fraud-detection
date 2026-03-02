@@ -3,13 +3,12 @@ import os
 import logging
 import numpy as np 
 import pandas as pd 
-from sklearn.preprocessing import RobustScaler
-from sklearn.preprocessing import StandardScaler 
+from sklearn.preprocessing import RobustScaler 
 from sklearn.model_selection import train_test_split 
 from imblearn.over_sampling import SMOTE 
 import joblib 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelnames)s - %(message)s") 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s") 
 logger = logging.getLogger(__name__) 
 
 def parse_args(): 
@@ -38,6 +37,7 @@ def load_data(file_path):
         logging.error(f"Error loading data from {file_path}: {e}")
         raise # This stops the script so you don't process an empty variable 
 
+
 def split_data(df, test_size, val_size, random_state): 
     """
     Splits the raw DataFrame into Train, Validation, and Test sets. 
@@ -54,7 +54,7 @@ def split_data(df, test_size, val_size, random_state):
     # We adjust the ratio because the "temp" data is already smaller than the original
     val_ratio = val_size / (1 - test_size) 
     
-    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=adjusted_val_size, random_state=random_state, stratify=y_temp)
+    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=val_ratio, random_state=random_state, stratify=y_temp) 
     
     # 4. Log the shapes and fraud percentages 
     datasets = {
@@ -69,26 +69,123 @@ def split_data(df, test_size, val_size, random_state):
 
     return X_train, X_val, X_test, y_train, y_val, y_test 
 
-def scale_features(X_train, X_val, X_test, output_dir): 
+
+def scale_features(X_train, X_val, X_test):
     """
-     Standardizes features using StandardScaler. 
-    Fits only on training data to prevent leakage.
+    Scales 'Amount' and 'Time' using RobustScaler.
+    Fits on Train, Transforms on Val and Test to avoid leakage.
+    """
+    # 1. Initialize the scaler
+    scaler = RobustScaler()
+
+    # Define the columns to scale
+    cols_to_scale = ['Amount', 'Time']
+    new_cols = ['scaled_amount', 'scaled_time']
+
+    # 2. Fit and Transform the Training data
+    # We use .values if needed, but assigning back to new columns works directly on DataFrames
+    X_train[new_cols] = scaler.fit_transform(X_train[cols_to_scale])
+
+    # 3. Transform (only) Validation and Test data
+    X_val[new_cols] = scaler.transform(X_val[cols_to_scale])
+    X_test[new_cols] = scaler.transform(X_test[cols_to_scale])
+
+    # 4. Drop the original unscaled columns
+    X_train = X_train.drop(columns=cols_to_scale)
+    X_val = X_val.drop(columns=cols_to_scale)
+    X_test = X_test.drop(columns=cols_to_scale)
+
+    logging.info(f"Features scaled and original '{cols_to_scale}' columns removed.")
+    
+    # 5. Return the modified DataFrames and the scaler object
+    return X_train, X_val, X_test, scaler
+
+
+def apply_smote(X_train, y_train, random_state):
+    """
+    Applies SMOTE to the training data to handle class imbalance.
+    Only applied to Training data to prevent data leakage.
+    """
+    # 1. Log class distribution BEFORE SMOTE
+    before_counts = y_train.value_counts().to_dict()
+    logging.info(f"Class distribution BEFORE SMOTE: {before_counts}")
+
+    # 2. Initialize and Run SMOTE
+    sm = SMOTE(random_state=random_state)
+    X_train_res, y_train_res = sm.fit_resample(X_train, y_train)
+
+    # 3. Log class distribution AFTER SMOTE
+    after_counts = y_train_res.value_counts().to_dict()
+    logging.info(f"Class distribution AFTER SMOTE: {after_counts}") 
+
+    # 4. Return the resampled (balanced) data
+    return X_train_res, y_train_res
+
+
+def save_splits(X_train, X_val, X_test, y_train, y_val, y_test, scaler, output_dir): 
+    """
+    Saves the processed DataFrames to CSVs in organized directories and exports 
+    the scaler for inference.  
     """ 
-    scaler = StandardScaler() 
+    # 1. Create subdirectories 
+    splits = ['train', 'validation', 'test'] 
+    for split in splits: 
+        os.makedirs(os.path.join(output_dir, split), exist_ok=True) 
 
-    # 1. Fit and transform the training set 
-    X_train_scaled = scaler.fit_transform(X_train) 
+    # 2. Define a list of tuples to iterate through for saving 
+    data_to_save = [ 
+        ('train', X_train, y_train), 
+        ('validation', X_val, y_val), 
+        ('test', X_test, y_test) 
+    ] 
 
-    # 2. Transform (DO NOT FIT) validation and test sets 
-    X_val_scaled = scaler.transform(X_val) 
-    X_test_scaled = scaler.transform(X_test) 
+    # 3. Combine X and y, then save 
+    for name, X_data, y_data in data_to_save: 
+        # Concatenate features and target along columns (axis=1) 
+        combined_df = pd.concat([X_data, y_data], axis=1) 
 
-    # 3. Save the scaler for future use (inference) 
+        # Define the file path 
+        file_path = os.path.join(output_dir, name, f"{name}.csv") 
+
+        # Save to CSV 
+        combined_df.to_csv(file_path, index=False) 
+
+        # Log the action 
+        logging.info(f"Saved {name} set to {file_path} | Rows: {len(combined_df)}") 
+
+    # 4. Save the scaler using joblib for later use in inference 
     scaler_path = os.path.join(output_dir, "scaler.joblib") 
     joblib.dump(scaler, scaler_path) 
     logging.info(f"Scaler saved to {scaler_path}") 
 
-    return X_train_scaled, X_val_scaled, X_test_scaled 
+def main():
+    args = parse_args()
+    
+    logger.info("Starting preprocessing pipeline...")
+    
+    # 1. Load
+    df = load_data(args.input_data)
+    
+    # 2. Split FIRST (before scaling)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
+        df, args.test_size, args.val_size, args.random_state
+    )
+    
+    # 3. Scale (fit on train only)
+    X_train, X_val, X_test, scaler = scale_features(X_train, X_val, X_test)
+    
+    # 4. SMOTE (train only)
+    X_train, y_train = apply_smote(X_train, y_train, args.random_state)
+    
+    # 5. Save everything
+    save_splits(X_train, X_val, X_test, y_train, y_val, y_test, scaler, args.output_dir)
+    
+    logger.info("Preprocessing complete!") 
+
+if __name__ == "__main__":
+    main()   
+
+
 
 
 
@@ -149,6 +246,3 @@ def scale_features(X_train, X_val, X_test, output_dir):
 
 
 
-if __name__ == "__main__": 
-    main() 
-    args = parse_args() 
