@@ -19,34 +19,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train a Logistic Regression model on SageMaker")
 
     # Data directories (where SageMaker will mount S3 data)
-    parser.add_argument(
-        "--train-dir", 
-        type=str, 
-        required=True, 
-        help="Directory containing train.csv"
-    )
-    parser.add_argument(
-        "--val-dir", 
-        type=str, 
-        required=True, 
-        help="Directory containing validation.csv"
-    )
-    parser.add_argument(
-        "--test-dir", 
-        type=str, 
-        required=True, 
-        help="Directory containing test.csv"
-    )
-
-    # Output directory for the model artifact
-    parser.add_argument(
-        "--model-dir", 
-        type=str, 
-        default="models/", 
-        help="Directory where the trained model will be saved (default: models/)"
-    )
-
-    # Model Hyperparameters
+    parser.add_argument("--train-dir", type=str, default=os.environ.get("SM_CHANNEL_TRAIN", "data/processed/train"))
+    parser.add_argument("--val-dir", type=str, default=os.environ.get("SM_CHANNEL_VALIDATION", "data/processed/validation"))
+    parser.add_argument("--test-dir", type=str, default=os.environ.get("SM_CHANNEL_TEST", "data/processed/test"))
+    
+    # Output directory for the model artifact 
+    parser.add_argument("--model-dir", type=str, default=os.environ.get("SM_MODEL_DIR", "models"))
+    
+    # Model Hyperparameters 
     parser.add_argument(
         "--max-iter", 
         type=int, 
