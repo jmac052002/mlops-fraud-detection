@@ -42,7 +42,7 @@ Note: activating `.venv` is optional for deployment. The script auto-detects `.v
 
 ## Project Status
 
-🔨 Currently in development — building incrementally phase by phase.
+🔨 Currently in development building incrementally phase by phase.
 
 - [x] Phase 1: Data layer (S3, Glue, data exploration and preprocessing)
 - [ ] Phase 2: Training pipeline (SageMaker Pipeline with evaluation gates)
