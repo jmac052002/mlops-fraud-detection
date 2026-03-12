@@ -4,7 +4,7 @@ import boto3
 import sagemaker
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.pipeline_context import PipelineSession
-from sagemaker.workflow.parameters import ParameterString
+from sagemaker.workflow.parameters import ParameterString, ParameterFloat
 from sagemaker.workflow.steps import ProcessingStep, TrainingStep
 from sagemaker.sklearn.processing import SKLearnProcessor
 from sagemaker.sklearn import SKLearn
@@ -12,6 +12,11 @@ from sagemaker.processing import ProcessingInput, ProcessingOutput
 from sagemaker.inputs import TrainingInput
 from sagemaker.workflow.model_step import ModelStep
 from sagemaker.model import Model
+from sagemaker.workflow.conditions import ConditionGreaterThanOrEqualTo
+from sagemaker.workflow.condition_step import ConditionStep
+from sagemaker.workflow.functions import JsonGet
+from sagemaker.workflow.properties import PropertyFile
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -52,7 +57,11 @@ def create_pipeline_parameters(config):
         default_value="PendingManualApproval"
     )
 
-    return input_data, instance_type, model_approval_status
+    f1_threshold = ParameterFloat(
+        name="F1Threshold",
+        default_value=0.10
+    )
+    return input_data, instance_type, model_approval_status, f1_threshold
 
 
 def create_processing_step(config, params, pipeline_session):
@@ -150,6 +159,78 @@ def create_training_step(config, params, step_process, pipeline_session):
     return step_train
 
 
+def create_evaluation_step(config, params, step_process, step_train, pipeline_session):
+    # Create a processor to run the evaluation script
+    eval_processor = SKLearnProcessor(
+        framework_version=config["framework_version"],
+        role=config["role"],
+        instance_type=params["instance_type"],
+        instance_count=1,
+        base_job_name="fraud-detection-evaluation",
+        sagemaker_session=pipeline_session
+    )
+
+    # PropertyFile tells SageMaker where to find the metrics JSON output
+    # so the condition step can read values from it
+    evaluation_report = PropertyFile(
+        name="EvaluationReport",
+        output_name="metrics",
+        path="metrics.json"
+    )
+
+    step_evaluate = ProcessingStep(
+        name="EvaluateModel",
+        processor=eval_processor,
+        inputs=[
+            ProcessingInput(
+                source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+                destination="/opt/ml/processing/model"
+            ),
+            ProcessingInput(
+                source=step_process.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri,
+                destination="/opt/ml/processing/test"
+            )
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="metrics",
+                source="/opt/ml/processing/output",
+                destination=f"s3://{config['bucket']}/evaluation"
+            )
+        ],
+        code="src/evaluation/evaluate.py",
+        job_arguments=[
+            "--model-dir", "/opt/ml/processing/model",
+            "--test-data-dir", "/opt/ml/processing/test",
+            "--output-dir", "/opt/ml/processing/output"
+        ],
+        property_files=[evaluation_report]
+    )
+
+    return step_evaluate, evaluation_report
+
+
+def create_condition_step(params, step_evaluate, evaluation_report, step_register):
+    # Quality gate: only register the model if F1 score meets the threshold
+    condition = ConditionGreaterThanOrEqualTo(
+        left=JsonGet(
+            step_name=step_evaluate.name,
+            property_file=evaluation_report,
+            json_path="f1_score"
+        ),
+        right=params["f1_threshold"]
+    )
+
+    step_condition = ConditionStep(
+        name="CheckModelQuality",
+        conditions=[condition],
+        if_steps=[step_register],
+        else_steps=[]
+    )
+
+    return step_condition
+
+
 def create_register_step(config, params, step_train, pipeline_session):
     # Register the trained model in SageMaker Model Registry
     model = Model(
@@ -179,11 +260,16 @@ def create_register_step(config, params, step_train, pipeline_session):
 
 # This function creates the SageMaker Pipeline by combining all the steps (processing, training, condition)
 # and defining the pipeline parameters.
-def create_pipeline(config, params, step_process, step_register, pipeline_session):
+def create_pipeline(config, params, step_process, step_train, step_evaluate, step_condition, pipeline_session):
     pipeline = Pipeline(
         name=config["pipeline_name"],
-        parameters=[params["input_data"], params["instance_type"], params["model_approval_status"]],
-        steps=[step_process, step_register],
+        parameters=[
+            params["input_data"],
+            params["instance_type"],
+            params["model_approval_status"],
+            params["f1_threshold"]
+        ],
+        steps=[step_process, step_train, step_evaluate, step_condition],
         sagemaker_session=pipeline_session
     )
 
@@ -193,10 +279,10 @@ def create_pipeline(config, params, step_process, step_register, pipeline_sessio
 def main():
     logger.info("Building SageMaker Pipeline...")
 
-    config = get_config()
-
     # PipelineSession defers all SageMaker API calls until pipeline execution
     # This is what allows pipeline variables to be used without immediate resolution
+    config = get_config()
+
     pipeline_session = PipelineSession()
 
     # Create parameters
@@ -204,16 +290,19 @@ def main():
     params = {
         "input_data": params_dict[0],
         "instance_type": params_dict[1],
-        "model_approval_status": params_dict[2]
+        "model_approval_status": params_dict[2],
+        "f1_threshold": params_dict[3]
     }
 
-    # Create steps
+   # Create steps
     step_process = create_processing_step(config, params, pipeline_session)
     step_train = create_training_step(config, params, step_process, pipeline_session)
+    step_evaluate, evaluation_report = create_evaluation_step(config, params, step_process, step_train, pipeline_session)
     step_register = create_register_step(config, params, step_train, pipeline_session)
+    step_condition = create_condition_step(params, step_evaluate, evaluation_report, step_register)
 
     # Build pipeline
-    pipeline = create_pipeline(config, params, step_process, step_register, pipeline_session)
+    pipeline = create_pipeline(config, params, step_process, step_train, step_evaluate, step_condition, pipeline_session)
     
     # Submit to SageMaker
     logger.info("Upserting pipeline...")

@@ -27,7 +27,7 @@ def parse_args():
 
 # This function extracts the trained model from the tar.gz file that SageMaker creates when saving the model. 
 # It assumes that the model file is named 'model.joblib' after extraction, which is a common convention for scikit-learn models saved with joblib.
-def extract_model(model_dir): 
+def extract_model(model_dir):
     model_files = [f for f in os.listdir(model_dir) if f.endswith(".tar.gz")]
     if not model_files:
         raise FileNotFoundError("No model file found in the specified directory.")
@@ -36,7 +36,15 @@ def extract_model(model_dir):
     with tarfile.open(model_path, "r:gz") as tar:
         tar.extractall(path=model_dir)
     
-    return os.path.join(model_dir, "model.joblib")  # Assuming the extracted model file is named 'model.joblib'
+    # Find the extracted joblib file
+    joblib_files = [f for f in os.listdir(model_dir) if f.endswith(".joblib")]
+    if not joblib_files:
+        raise FileNotFoundError("No .joblib model file found after extraction.")
+    
+    model = joblib.load(os.path.join(model_dir, joblib_files[0]))
+    logger.info(f"Model loaded: {joblib_files[0]}")
+    return model
+
 
 # Find the CSV file in the test directory, Read it with pandas, 
 # Separate X (everything except Class) and y (Class), Log the shape, Return X, y
@@ -69,10 +77,10 @@ def calculate_metrics(y_test, y_pred, y_prob):
     roc_auc = roc_auc_score(y_test, y_prob)
     logger.info(f"Evaluation Metrics - F1 Score: {f1}, Precision: {precision}, Recall: {recall}, ROC AUC: {roc_auc}")  
     metrics = {
-        "f1": f1,
-        "precision": precision,
-        "recall": recall,
-        "roc_auc": roc_auc
+        "f1_score": round(f1, 4),
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "roc_auc": round(roc_auc, 4)
     }
     logger.info(f"Confusion Matrix:\n{confusion_matrix(y_test, y_pred)}")
     logger.info(f"Classification Report:\n{classification_report(y_test, y_pred)}")
@@ -84,7 +92,7 @@ def calculate_metrics(y_test, y_pred, y_prob):
 # Log the path where the metrics are saved for better visibility in the SageMaker logs.
 def save_metrics(metrics, output_dir): 
     os.makedirs(output_dir, exist_ok=True)
-    metrics_path = os.path.join(output_dir, "evaluation_metrics.json")
+    metrics_path = os.path.join(output_dir, "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=4)
     logger.info(f"Evaluation metrics saved to {metrics_path}")
@@ -100,21 +108,24 @@ def main():
     model = extract_model(args.model_dir)
 
     # 2. Load test data
-    X_test, y_test = load_test_data(args.test_dir)
+    X_test, y_test = load_test_data(args.test_data_dir)
 
     # 3. Evaluate
-    metrics = evaluate_model(model, X_test, y_test)
+    y_pred, y_prob = evaluate_model(model, X_test, y_test)
 
-    # 4. Log pass/fail against threshold
+    # 4. Calculate metrics
+    metrics = calculate_metrics(y_test, y_pred, y_prob)
+
+    # 5. Log pass/fail against threshold
     if metrics["f1_score"] >= args.threshold:
         logger.info(f"PASSED: F1 score {metrics['f1_score']} >= threshold {args.threshold}")
     else:
         logger.info(f"FAILED: F1 score {metrics['f1_score']} < threshold {args.threshold}")
 
-    # 5. Save metrics
+    # 6. Save metrics
     save_metrics(metrics, args.output_dir)
 
-    logger.info("Evaluation complete!") 
-
-    if __name__ == "__main__":
-        main() 
+    logger.info("Evaluation complete!")
+    
+if __name__ == "__main__":
+    main() 
