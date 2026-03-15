@@ -25,23 +25,24 @@ def parse_args():
 
 def load_data(file_path):
     # If a directory is passed, find the first CSV inside it
-    if os.path.isdir(file_path):
-        csv_files = [f for f in os.listdir(file_path) if f.endswith(".csv")]
-        if not csv_files:
-            raise FileNotFoundError(f"No CSV file found in directory: {file_path}")
-        file_path = os.path.join(file_path, csv_files[0])
-    
-    logger.info(f"Loading data from: {file_path}")
-    df = pd.read_csv(file_path) 
+    try:
+        if os.path.isdir(file_path):
+            csv_files = [f for f in os.listdir(file_path) if f.endswith(".csv")]
+            if not csv_files:
+                raise FileNotFoundError(f"No CSV file found in directory: {file_path}")
+            file_path = os.path.join(file_path, csv_files[0])
 
-        # 2. Log success and the shape of the data 
-        logging.info(f"Successfully loaded data from {file_path}") 
-        logging.info(f"DataFrame Shape: {df.shape[0]} rows, {df.shape[1]} columns") 
+        logger.info(f"Loading data from: {file_path}")
+        df = pd.read_csv(file_path)
+
+        # Log success and the shape of the data.
+        logging.info(f"Successfully loaded data from {file_path}")
+        logging.info(f"DataFrame Shape: {df.shape[0]} rows, {df.shape[1]} columns")
         return df
-    except Exception as e: 
-        # 3. Log an error if the file is missing or corrupted
+    except Exception as e:
+        # Log an error if the file is missing or corrupted.
         logging.error(f"Error loading data from {file_path}: {e}")
-        raise # This stops the script so you don't process an empty variable 
+        raise
 
 
 def split_data(df, test_size, val_size, random_state): 
