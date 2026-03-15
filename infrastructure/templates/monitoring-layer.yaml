@@ -12,6 +12,10 @@ Parameters:
     Default: jmac052002@gmail.com 
     Description: Email address to receive alerts when pipeline execution fails 
 
+  DataBucketName:
+    Type: String
+    Description: Name of the S3 bucket containing evaluation metrics
+
 Resources: 
 
   # SNS Topic - the "megaphone" that sends emails
@@ -67,6 +71,16 @@ Resources:
                   - sagemaker:DescribePipelineExecution 
                   - sagemaker:ListPipelineExecutionSteps 
                 Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:pipeline/${PipelineName}/* 
+              # Read metrics.json from S3
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${DataBucketName}/evaluation/*
+              # Publish custom metrics to CloudWatch
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*" 
 
   # Lambda that receives pipeline state change events and send alerts 
   MonitoringLambdaFunction: 
@@ -82,6 +96,9 @@ Resources:
         Variables: 
           SNS_TOPIC_ARN: !Ref PipelineAlertTopic 
           PIPELINE_NAME: !Ref PipelineName 
+          METRICS_BUCKET: !Ref DataBucketName
+          METRICS_KEY: evaluation/metrics.json 
+
       Code: 
         ZipFile: | 
           import json
@@ -93,63 +110,124 @@ Resources:
           logger.setLevel(logging.INFO)
 
           sns_client = boto3.client('sns')
+          sagemaker_client = boto3.client('sagemaker')
+          s3_client = boto3.client('s3')
+          cloudwatch_client = boto3.client('cloudwatch')
 
           def handler(event, context):
-              logger.info(f"Received event: {json.dumps(event)}")
+            logger.info(f"Received event: {json.dumps(event)}")
 
-              sns_topic_arn = os.environ['SNS_TOPIC_ARN']
-              pipeline_name = os.environ['PIPELINE_NAME']
+            sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+            pipeline_name = os.environ['PIPELINE_NAME']
+            metrics_bucket = os.environ['METRICS_BUCKET']
+            metrics_key = os.environ['METRICS_KEY']
 
-              # Extract info from the EventBridge event
-              detail = event.get('detail', {})
-              execution_arn = detail.get('pipelineExecutionArn', 'Unknown')
-              status = detail.get('currentPipelineExecutionStatus', 'Unknown')
+            detail = event.get('detail', {})
+            execution_arn = detail.get('pipelineExecutionArn', 'Unknown')
+            status = detail.get('currentPipelineExecutionStatus', 'Unknown')
 
-              logger.info(f"Pipeline: {pipeline_name} | Status: {status}")
+            logger.info(f"Pipeline: {pipeline_name} | Status: {status}")
 
-              # Only alert on terminal states (not intermediate ones like Executing)
-              if status == 'Failed':
-                  subject = "ALERT: MLOps Pipeline FAILED"
-                  message = (
-                      f"Your fraud detection pipeline has FAILED.\n\n"
-                      f"Pipeline: {pipeline_name}\n"
-                      f"Status: {status}\n"
-                      f"Execution ARN: {execution_arn}\n\n"
-                      f"Check the SageMaker console for details:\n"
-                      f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
-                  )
-                  _publish_alert(sns_topic_arn, subject, message)
+            if status == 'Failed':
+              subject = f"ALERT: MLOps Pipeline FAILED"
+              message = (
+                f"Your fraud detection pipeline has FAILED.\n\n"
+                f"Pipeline: {pipeline_name}\n"
+                f"Status: {status}\n"
+                f"Execution ARN: {execution_arn}\n\n"
+                f"Check the SageMaker console for details:\n"
+                f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
+              )
+              _publish_alert(sns_topic_arn, subject, message)
 
-              elif status == 'Succeeded':
-                  subject = "SUCCESS: MLOps Pipeline Completed"
-                  message = (
-                      f"Your fraud detection pipeline completed successfully.\n\n"
-                      f"Pipeline: {pipeline_name}\n"
-                      f"Status: {status}\n"
-                      f"Execution ARN: {execution_arn}\n\n"
-                      f"Check the SageMaker console for model registration details:\n"
-                      f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
-                  )
-                  _publish_alert(sns_topic_arn, subject, message)
+            elif status == 'Succeeded':
+              # Fetch and publish metrics to CloudWatch
+              metrics = _fetch_metrics(metrics_bucket, metrics_key)
+              if metrics:
+                _publish_cloudwatch_metrics(metrics, pipeline_name)
 
-              else:
-                  # Executing, Stopping, etc. - log but don't alert
-                  logger.info(f"Intermediate status '{status}' - no alert sent")
+              subject = f"SUCCESS: MLOps Pipeline Completed"
+              message = (
+                f"Your fraud detection pipeline completed successfully.\n\n"
+                f"Pipeline: {pipeline_name}\n"
+                f"Status: {status}\n"
+                f"Execution ARN: {execution_arn}\n\n"
+                f"Model Metrics:\n"
+                f"  F1 Score:  {metrics.get('f1_score', 'N/A')}\n"
+                f"  Precision: {metrics.get('precision', 'N/A')}\n"
+                f"  Recall:    {metrics.get('recall', 'N/A')}\n"
+                f"  ROC AUC:   {metrics.get('roc_auc', 'N/A')}\n\n"
+                f"Check the SageMaker console for model registration details:\n"
+                f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
+              )
+              _publish_alert(sns_topic_arn, subject, message)
 
-              return {"statusCode": 200, "body": f"Processed status: {status}"}
+            else:
+              logger.info(f"Intermediate status '{status}' - no alert sent")
+
+            return {"statusCode": 200, "body": f"Processed status: {status}"}
+
+          def _fetch_metrics(bucket, key):
+            """Fetch metrics.json from S3 and return as dict"""
+            try:
+              response = s3_client.get_object(Bucket=bucket, Key=key)
+              metrics = json.loads(response['Body'].read().decode('utf-8'))
+              logger.info(f"Metrics fetched from S3: {metrics}")
+              return metrics
+            except Exception as e:
+              logger.error(f"Failed to fetch metrics from S3: {str(e)}")
+              return {}
+
+          def _publish_cloudwatch_metrics(metrics, pipeline_name):
+            """Publish model metrics to CloudWatch custom namespace"""
+            try:
+              metric_data = [
+                {
+                  'MetricName': 'F1Score',
+                  'Dimensions': [{'Name': 'PipelineName', 'Value': pipeline_name}],
+                  'Value': metrics['f1_score'],
+                  'Unit': 'None'
+                },
+                {
+                  'MetricName': 'Precision',
+                  'Dimensions': [{'Name': 'PipelineName', 'Value': pipeline_name}],
+                  'Value': metrics['precision'],
+                  'Unit': 'None'
+                },
+                {
+                  'MetricName': 'Recall',
+                  'Dimensions': [{'Name': 'PipelineName', 'Value': pipeline_name}],
+                  'Value': metrics['recall'],
+                  'Unit': 'None'
+                },
+                {
+                  'MetricName': 'RocAuc',
+                  'Dimensions': [{'Name': 'PipelineName', 'Value': pipeline_name}],
+                  'Value': metrics['roc_auc'],
+                  'Unit': 'None'
+                }
+              ]
+              cloudwatch_client.put_metric_data(
+                Namespace='MLOps/FraudDetection',
+                MetricData=metric_data
+              )
+              logger.info("Metrics published to CloudWatch namespace: MLOps/FraudDetection")
+            except Exception as e:
+              logger.error(f"Failed to publish CloudWatch metrics: {str(e)}")
+              raise
 
           def _publish_alert(topic_arn, subject, message):
-              """Publish a message to SNS."""
-              try:
-                  response = sns_client.publish(
-                      TopicArn=topic_arn,
-                      Subject=subject,
-                      Message=message
-                  )
-                  logger.info(f"Alert sent. MessageId: {response['MessageId']}")
-              except Exception as e:
-                  logger.error(f"Failed to publish SNS alert: {str(e)}")
-                  raise
+            """Publish a message to SNS"""
+            try:
+              response = sns_client.publish(
+                TopicArn=topic_arn,
+                Subject=subject,
+                Message=message
+              )
+              logger.info(f"Alert sent. MessageId: {response['MessageId']}")
+            except Exception as e:
+              logger.error(f"Failed to publish SNS alert: {str(e)}")
+              raise
 
   # EventBridge rule that watches for pipeline state changes 
   PipelineStateChangeRule:
