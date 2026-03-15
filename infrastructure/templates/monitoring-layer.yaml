@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MLOps Fraud Detection - Monitoring and Alerting Layer 
+
+Parameters:
+  PipelineName: 
+    Type: String 
+    Default: mlops-fraud-detection-pipeline
+    Description: Name of Sagemaker Pipeline to monitor 
+
+  AlertEmail: 
+    Type: String 
+    Default: jmac052002@gmail.com 
+    Description: Email address to receive alerts when pipeline execution fails 
+
+Resources: 
+
+  # SNS Topic - the "megaphone" that sends emails
+  # Any service can publish a message here, and subscribers get notified
+  PipelineAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: mlops-fraud-detection-alerts 
+      DisplayName: MLOps Fraud Detection Alerts 
+
+  # Subscription to the SNS topic - connects the topic to an email address
+  # AWS will send a confirmation email you must click before alerts work 
+  PipelineAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref PipelineAlertTopic
+      Protocol: email 
+      Endpoint: !Ref AlertEmail 
+
+  # IAM Role for the monitoring Lambda function
+  # Grants permissions to read pipeline status and publish to SNS 
+  MonitoringLambdaRole: 
+    Type: AWS::IAM::Role 
+    Properties: 
+      RoleName: mlops-fraud-detection-monitoring-role 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17' 
+        Statement: 
+          - Effect: Allow 
+            Principal: 
+              Service: lambda.amazonaws.com 
+            Action: sts:AssumeRole 
+      Policies: 
+        - PolicyName: MonitoringLambdaPolicy 
+          PolicyDocument: 
+            Version: '2012-10-17' 
+            Statement:
+              # Publish alerts to SNS 
+              - Effect: Allow 
+                Action: 
+                  - sns:Publish 
+                Resource: !Ref PipelineAlertTopic 
+              # Write logs to Cloudwatch 
+              - Effect: Allow 
+                Action: 
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:* 
+              # Read pipeline execution details 
+              - Effect: Allow 
+                Action: 
+                  - sagemaker:DescribePipelineExecution 
+                  - sagemaker:ListPipelineExecutionSteps 
+                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:pipeline/${PipelineName}/* 
+
+  # Lambda that receives pipeline state change events and send alerts 
+  MonitoringLambdaFunction: 
+    Type: AWS::Lambda::Function 
+    Properties: 
+      FunctionName: mlops-fraud-detection-monitor 
+      Runtime: python3.12 
+      Handler: index.handler 
+      Role: !GetAtt MonitoringLambdaRole.Arn 
+      Timeout: 30 
+      MemorySize: 128 
+      Environment:
+        Variables: 
+          SNS_TOPIC_ARN: !Ref PipelineAlertTopic 
+          PIPELINE_NAME: !Ref PipelineName 
+      Code: 
+        ZipFile: | 
+          import json
+          import logging
+          import boto3
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          sns_client = boto3.client('sns')
+
+          def handler(event, context):
+              logger.info(f"Received event: {json.dumps(event)}")
+
+              sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+              pipeline_name = os.environ['PIPELINE_NAME']
+
+              # Extract info from the EventBridge event
+              detail = event.get('detail', {})
+              execution_arn = detail.get('pipelineExecutionArn', 'Unknown')
+              status = detail.get('currentPipelineExecutionStatus', 'Unknown')
+
+              logger.info(f"Pipeline: {pipeline_name} | Status: {status}")
+
+              # Only alert on terminal states (not intermediate ones like Executing)
+              if status == 'Failed':
+                  subject = "ALERT: MLOps Pipeline FAILED"
+                  message = (
+                      f"Your fraud detection pipeline has FAILED.\n\n"
+                      f"Pipeline: {pipeline_name}\n"
+                      f"Status: {status}\n"
+                      f"Execution ARN: {execution_arn}\n\n"
+                      f"Check the SageMaker console for details:\n"
+                      f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
+                  )
+                  _publish_alert(sns_topic_arn, subject, message)
+
+              elif status == 'Succeeded':
+                  subject = "SUCCESS: MLOps Pipeline Completed"
+                  message = (
+                      f"Your fraud detection pipeline completed successfully.\n\n"
+                      f"Pipeline: {pipeline_name}\n"
+                      f"Status: {status}\n"
+                      f"Execution ARN: {execution_arn}\n\n"
+                      f"Check the SageMaker console for model registration details:\n"
+                      f"https://console.aws.amazon.com/sagemaker/home#/pipelines"
+                  )
+                  _publish_alert(sns_topic_arn, subject, message)
+
+              else:
+                  # Executing, Stopping, etc. - log but don't alert
+                  logger.info(f"Intermediate status '{status}' - no alert sent")
+
+              return {"statusCode": 200, "body": f"Processed status: {status}"}
+
+          def _publish_alert(topic_arn, subject, message):
+              """Publish a message to SNS."""
+              try:
+                  response = sns_client.publish(
+                      TopicArn=topic_arn,
+                      Subject=subject,
+                      Message=message
+                  )
+                  logger.info(f"Alert sent. MessageId: {response['MessageId']}")
+              except Exception as e:
+                  logger.error(f"Failed to publish SNS alert: {str(e)}")
+                  raise
+
+  # EventBridge rule that watches for pipeline state changes 
+  PipelineStateChangeRule:
+    Type: AWS::Events::Rule 
+    Properties:
+      Name: mlops-fraud-detection-pipeline-monitor 
+      Description: Watch for Sagemaker pipeline execution state changes 
+      State: ENABLED 
+      EventPattern: 
+        source: 
+          - aws.sagemaker 
+        detail-type: 
+          - SageMaker Pipeline Execution Status Change 
+        detail:
+          pipelineArn:
+            - !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:pipeline/${PipelineName}
+      Targets:
+        - Arn: !GetAtt MonitoringLambdaFunction.Arn 
+          Id: MonitoringLambdaTarget 
+
+  # Permission for EventBridge to invoke the monitoring Lambda 
+  MonitoringLambdaInvokePermission: 
+    Type: AWS::Lambda::Permission 
+    Properties: 
+      FunctionName: !Ref MonitoringLambdaFunction 
+      Action: lambda:InvokeFunction 
+      Principal: events.amazonaws.com 
+      SourceArn: !GetAtt PipelineStateChangeRule.Arn 
+
+Outputs: 
+  SNSTopicArn: 
+    Description: ARN of the alerts SNS topic 
+    Value: !Ref PipelineAlertTopic 
+
+  MonitoringLambdaArn: 
+    Description: ARN of the monitoring Lambda function 
+    Value: !GetAtt MonitoringLambdaFunction.Arn 
+
+
+                
+                
+     
