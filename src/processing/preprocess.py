@@ -23,13 +23,16 @@ def parse_args():
     parser.add_argument("--random-state", type=int, default=42, help="Seed for reproducibility") 
     return parser.parse_args() 
 
-def load_data(file_path): 
-    """
-    Reads a CSV file and logs the process using the logging module.
-    """
-    try: 
-        # 1. Attempt to read the CSV 
-        df = pd.read_csv(file_path) 
+def load_data(file_path):
+    # If a directory is passed, find the first CSV inside it
+    if os.path.isdir(file_path):
+        csv_files = [f for f in os.listdir(file_path) if f.endswith(".csv")]
+        if not csv_files:
+            raise FileNotFoundError(f"No CSV file found in directory: {file_path}")
+        file_path = os.path.join(file_path, csv_files[0])
+    
+    logger.info(f"Loading data from: {file_path}")
+    df = pd.read_csv(file_path) 
 
         # 2. Log success and the shape of the data 
         logging.info(f"Successfully loaded data from {file_path}") 
