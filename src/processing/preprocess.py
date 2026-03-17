@@ -24,23 +24,28 @@ def parse_args():
     return parser.parse_args() 
 
 def load_data(file_path):
-    # If a directory is passed, find the first CSV inside it
     try:
+        # Case 1: path is a directory - scan for any CSV
         if os.path.isdir(file_path):
             csv_files = [f for f in os.listdir(file_path) if f.endswith(".csv")]
             if not csv_files:
                 raise FileNotFoundError(f"No CSV file found in directory: {file_path}")
             file_path = os.path.join(file_path, csv_files[0])
 
+        # Case 2: path is a file that doesn't exist - scan parent directory
+        elif not os.path.exists(file_path):
+            parent_dir = os.path.dirname(file_path)
+            csv_files = [f for f in os.listdir(parent_dir) if f.endswith(".csv")]
+            if not csv_files:
+                raise FileNotFoundError(f"No CSV file found in directory: {parent_dir}")
+            file_path = os.path.join(parent_dir, csv_files[0])
+
         logger.info(f"Loading data from: {file_path}")
         df = pd.read_csv(file_path)
-
-        # Log success and the shape of the data.
         logging.info(f"Successfully loaded data from {file_path}")
         logging.info(f"DataFrame Shape: {df.shape[0]} rows, {df.shape[1]} columns")
         return df
     except Exception as e:
-        # Log an error if the file is missing or corrupted.
         logging.error(f"Error loading data from {file_path}: {e}")
         raise
 
