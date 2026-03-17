@@ -318,6 +318,24 @@ def main():
     execution.wait()
     logger.info("Pipeline execution complete!")
 
+    # Get final execution status
+    execution_status = execution.describe()['PipelineExecutionStatus']
+    logger.info(f"Final status: {execution_status}")
+
+    # Invoke monitoring Lambda to send alerts and publish CloudWatch metrics
+    lambda_client = boto3.client('lambda')
+    lambda_client.invoke(
+        FunctionName='mlops-fraud-detection-monitor',
+        InvocationType='Event',
+        Payload=json.dumps({
+            'detail': {
+                'pipelineExecutionArn': execution.arn,
+                'currentPipelineExecutionStatus': execution_status
+            }
+        })
+    )
+    logger.info("Monitoring Lambda invoked successfully")
+
 
 if __name__ == "__main__":
     main()
