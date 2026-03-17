@@ -45,9 +45,9 @@ Note: activating `.venv` is optional for deployment. The script auto-detects `.v
 🔨 Currently in development building incrementally phase by phase.
 
 - [x] Phase 1: Data layer (S3, Glue, data exploration and preprocessing)
-- [ ] Phase 2: Training pipeline (SageMaker Pipeline with evaluation gates)
-- [ ] Phase 3: Automated deployment (Lambda-triggered endpoint updates)
-- [ ] Phase 4: Trigger mechanisms (S3 events, EventBridge schedules)
-- [ ] Phase 5: Monitoring and drift detection (Model Monitor, CloudWatch)
+- [x] Phase 2: Training pipeline (SageMaker Pipeline with evaluation gates)
+- [x] Phase 3: Automated deployment (Lambda-triggered endpoint updates)
+- [x] Phase 4: Trigger mechanisms (S3 events, EventBridge schedules)
+- [x] Phase 5: Monitoring and drift detection (Model Monitor, CloudWatch)
 - [ ] Phase 6: Full IaC (all infrastructure in CloudFormation)
 - [ ] Phase 7: CI/CD meta-pipeline (CodePipeline for infrastructure deployment)
