@@ -229,24 +229,21 @@ Resources:
               logger.error(f"Failed to publish SNS alert: {str(e)}")
               raise
 
-  # EventBridge rule that watches for pipeline state changes 
+  # EventBridge rule that watches for pipeline state changes
   PipelineStateChangeRule:
-    Type: AWS::Events::Rule 
+    Type: AWS::Events::Rule
     Properties:
-      Name: mlops-fraud-detection-pipeline-monitor 
-      Description: Watch for Sagemaker pipeline execution state changes 
-      State: ENABLED 
-      EventPattern: 
-        source: 
-          - aws.sagemaker 
-        detail-type: 
-          - SageMaker Pipeline Execution Status Change 
-        detail:
-          pipelineArn:
-            - !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:pipeline/${PipelineName}
+      Name: mlops-fraud-detection-pipeline-monitor
+      Description: Watch for Sagemaker pipeline execution state changes
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sagemaker
+        detail-type:
+          - SageMaker Pipeline Execution Status Change
       Targets:
-        - Arn: !GetAtt MonitoringLambdaFunction.Arn 
-          Id: MonitoringLambdaTarget 
+        - Arn: !GetAtt MonitoringLambdaFunction.Arn
+          Id: MonitoringLambdaTarget
 
   # Permission for EventBridge to invoke the monitoring Lambda 
   MonitoringLambdaInvokePermission: 
