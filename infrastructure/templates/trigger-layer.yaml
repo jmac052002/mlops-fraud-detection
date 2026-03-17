@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MLOps Fraud Detection - Automated Pipeline Trigger 
+
+Parameters:
+  PipelineName:
+    Type: String 
+    Default: mlops-fraud-detection-pipeline 
+    Description: Name of the Sagemaker Pipeline to trigger 
+
+  DataBucketName: 
+    Type: String 
+    Description: Name of the S3 bucket containing the raw data 
+
+Resources: 
+
+  # IAM Role that the Lambda function assumes 
+  # Grants permissions to start SageMaker pipelines and write Cloudwatch logs 
+  TriggerLambdaRole: 
+    Type: AWS::IAM::Role 
+    Properties: 
+      RoleName: mlops-fraud-detection-trigger-role 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17' 
+        Statement: 
+          - Effect: Allow 
+            Principal: 
+              Service: lambda.amazonaws.com 
+            Action: sts:AssumeRole 
+      Policies: 
+        - PolicyName: SageMakerPipelineAccess 
+          PolicyDocument: 
+            Version: '2012-10-17' 
+            Statement: 
+              - Effect: Allow 
+                Action: 
+                  - sagemaker:StartPipelineExecution 
+                  - sagemaker:DescribePipeline 
+                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:pipeline/${PipelineName} 
+              - Effect: Allow 
+                Action: 
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents 
+                Resource: arn:aws:logs:*:*:*
+
+  # Lambda function that receives the trigger and starts the pipeline 
+  TriggerLambdaFunction: 
+    Type: AWS::Lambda::Function 
+    Properties: 
+      FunctionName: mlops-fraud-detection-trigger-function 
+      Runtime: python3.12 
+      Handler: index.handler
+      Role: !GetAtt TriggerLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          PIPELINE_NAME: !Ref PipelineName
+      Code: 
+        ZipFile: |
+          import json
+          import logging 
+          import boto3
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          sagemaker_client = boto3.client('sagemaker')
+
+          def handler(event, context):
+              logger.info(f"Received event: {json.dumps(event)}")
+              pipeline_name = os.environ["PIPELINE_NAME"]
+
+              bucket = event['detail']['bucket']['name']
+              key = event['detail']['object']['key']
+              input_data_uri = f"s3://{bucket}/{key}"
+
+              if not key.startswith("raw/") or not key.endswith(".csv"):
+                  logger.info(f"Skipping non-data file: {key}")
+                  return {"statusCode": 200, "body": "Skipped - not a raw CSV file"}
+
+              logger.info(f"Starting pipeline '{pipeline_name}' with input: {input_data_uri}")
+              response = sagemaker_client.start_pipeline_execution(
+                  PipelineName=pipeline_name,
+                  PipelineParameters=[
+                      {"Name": "InputDataUrl", "Value": input_data_uri}
+                  ]
+              )
+              logger.info(f"Pipeline execution started: {response['PipelineExecutionArn']}")
+              return {"statusCode": 200, "body": json.dumps(response['PipelineExecutionArn'])} 
+
+  # EventBridge rule to trigger the Lambda function on new S3 objects in the raw/ folder
+  # S3 must have EventBridge notifications enabled for this to work 
+  S3UploadRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: mlops-fraud-detection-s3-trigger
+      Description: Trigger pipeline when new data lands in raw/
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref DataBucketName
+          object:
+            key:
+              - prefix: raw/
+      Targets:
+        - Arn: !GetAtt TriggerLambdaFunction.Arn
+          Id: TriggerLambdaTarget
+
+  # Permission that allows EventBridge to invoke the Lambda function
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TriggerLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt S3UploadRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the trigger Lambda function
+    Value: !GetAtt TriggerLambdaFunction.Arn
+
+  EventBridgeRuleArn:
+    Description: ARN of the EventBridge rule
+    Value: !GetAtt S3UploadRule.Arn
