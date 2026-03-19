@@ -41,6 +41,9 @@ Resources:
             Prefix: model-artifacts/
             Status: Enabled
             ExpirationInDays: 90
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
 
   SageMakerExecutionRole:
     Type: AWS::IAM::Role
