@@ -154,6 +154,7 @@ Resources:
                 FullRepositoryId: !Sub '${GitHubOwner}/${GitHubRepo}'
                 BranchName: !Ref GitHubBranch
                 OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
               OutputArtifacts:
                 - Name: SourceCode
         - Name: Build
