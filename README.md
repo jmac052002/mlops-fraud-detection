@@ -31,7 +31,7 @@ Model Monitor baseline watches for data drift
 - **ML:** scikit-learn (Logistic Regression), imbalanced-learn (SMOTE)
 - **Infrastructure:** AWS CloudFormation (3 stacks)
 - **AWS Services:** S3, SageMaker Pipelines, SageMaker Model Registry, SageMaker Endpoints, SageMaker Model Monitor, Lambda, EventBridge, SNS, CloudWatch, IAM
-- **Dataset:** [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) — 284,807 transactions, 0.17% fraud rate
+- **Dataset:** [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) 284,807 transactions, 0.17% fraud rate
 
 ---
 
