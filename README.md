@@ -138,3 +138,4 @@ python src/deployment/deploy_endpoint.py
 # Phase 7 complete
 
 test
+test2
