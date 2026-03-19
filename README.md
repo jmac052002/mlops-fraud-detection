@@ -1,6 +1,6 @@
 # MLOps Fraud Detection Pipeline
 
-An end-to-end MLOps pipeline on AWS that automates the full lifecycle of a fraud detection model — from raw data ingestion through training, evaluation, quality gating, model registration, deployment, and monitoring. All infrastructure is defined as code using AWS CloudFormation.
+An end-to-end MLOps pipeline on AWS that automates the full lifecycle of a fraud detection model from raw data ingestion through training, evaluation, quality gating, model registration, deployment, and monitoring. All infrastructure is defined as code using AWS CloudFormation.
 
 ---
 
@@ -106,7 +106,7 @@ python src/deployment/deploy_endpoint.py
 | Recall | 0.8784 |
 | ROC-AUC | 0.9612 |
 
-> High recall is the design goal — catching 88% of fraud cases is more valuable than avoiding false positives in this domain.
+> High recall is the design goal catching 88% of fraud cases is more valuable than avoiding false positives in this domain.
 
 ---
 
@@ -114,21 +114,21 @@ python src/deployment/deploy_endpoint.py
 
 - **Pipeline alerts:** SNS email on every pipeline success or failure
 - **Model metrics:** F1, Precision, Recall, ROC-AUC published to CloudWatch `MLOps/FraudDetection` namespace after every run
-- **Data drift:** Model Monitor baseline established from training data — constraints and statistics saved to S3
+- **Data drift:** Model Monitor baseline established from training data constraints and statistics saved to S3
 
 ---
 
 ## Project Status
 
-- [x] Phase 1: Data layer — S3, IAM, CloudFormation
-- [x] Phase 2: Production scripts — preprocessing, training, evaluation
-- [x] Phase 3: SageMaker Pipeline — 5-step pipeline with quality gate
-- [x] Phase 4: Automated triggers — S3 → EventBridge → Lambda → Pipeline
-- [x] Phase 5A: Pipeline alerting — SNS email on success/failure
-- [x] Phase 5B: CloudWatch metrics — custom namespace with model metrics
+- [x] Phase 1: Data layer-S3, IAM, CloudFormation
+- [x] Phase 2: Production scripts-preprocessing, training, evaluation
+- [x] Phase 3: SageMaker Pipeline-5-step pipeline with quality gate
+- [x] Phase 4: Automated triggers-S3 → EventBridge → Lambda → Pipeline
+- [x] Phase 5A: Pipeline alerting-SNS email on success/failure
+- [x] Phase 5B: CloudWatch metrics-custom namespace with model metrics
 - [x] Phase 5C: Model deployment + Model Monitor baseline
-- [x] Phase 6: Full IaC — single deploy.sh command, EventBridge fix
-- [ ] Phase 7: CI/CD — CodePipeline triggered by GitHub pushes
+- [x] Phase 6: Full IaC-single deploy.sh command, EventBridge fix
+- [ ] Phase 7: CI/CD-CodePipeline triggered by GitHub pushes
 
 ---
 
