@@ -89,7 +89,9 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: codepipeline.amazonaws.com
+              Service:
+                - codepipeline.amazonaws.com
+                - events.amazonaws.com
             Action: sts:AssumeRole
       Policies:
         - PolicyName: CodePipelinePolicy
@@ -113,6 +115,10 @@ Resources:
                 Action:
                   - codestar-connections:UseConnection
                 Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - codepipeline:StartPipelineExecution
+                Resource: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${ProjectName}-cicd'
 
   # CodeBuild project
   CodeBuildProject:
@@ -169,6 +175,30 @@ Resources:
                 ProjectName: !Ref CodeBuildProject
               InputArtifacts:
                 - Name: SourceCode
+
+  # EventBridge rule to auto-trigger pipeline on GitHub push
+  PipelineTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-cicd-trigger'
+      Description: Trigger CodePipeline on GitHub push via CodeConnections
+      EventPattern:
+        source:
+          - aws.codeconnections
+        detail-type:
+          - CodeConnections Source Code Change
+        detail:
+          connectionArn:
+            - !Ref GitHubConnectionArn
+          repositoryName:
+            - !Ref GitHubRepo
+          branchName:
+            - !Ref GitHubBranch
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${ProjectName}-cicd'
+          Id: CodePipelineTarget
+          RoleArn: !GetAtt CodePipelineRole.Arn
 
 Outputs:
   PipelineUrl:
