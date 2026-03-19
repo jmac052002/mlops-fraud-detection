@@ -1,0 +1,28 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Installing dependencies..."
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "Validating CloudFormation templates..."
+      - cfn-lint infrastructure/data-layer.yaml
+      - cfn-lint infrastructure/templates/trigger-layer.yaml
+      - cfn-lint infrastructure/templates/monitoring-layer.yaml
+      - echo "Validation complete."
+
+  build:
+    commands:
+      - echo "Deploying infrastructure..."
+      - bash infrastructure/deploy.sh
+      - echo "Updating SageMaker pipeline definition..."
+      - python src/pipeline/sagemaker_pipeline.py --update-only
+
+  post_build:
+    commands:
+      - echo "CI/CD pipeline complete!"
