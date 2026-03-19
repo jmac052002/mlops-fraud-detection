@@ -6,3 +6,5 @@ seaborn
 boto3
 jupyter
 cfn-lint
+sagemaker>=2.199,<3.0
+imbalanced-learn
