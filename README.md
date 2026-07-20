@@ -42,8 +42,10 @@ mlops-fraud-detection/
 │   ├── data-layer.yaml          # S3 bucket, SageMaker IAM role
 │   ├── deploy.sh                # Single-command full deployment
 │   └── templates/
-│       ├── trigger-layer.yaml   # Lambda + EventBridge S3 trigger
-│       └── monitoring-layer.yaml # SNS alerts + monitoring Lambda
+│       ├── trigger-layer.yaml    # Lambda + EventBridge S3 trigger
+│       ├── monitoring-layer.yaml # SNS alerts + monitoring Lambda
+│       └── cicd-layer.yaml       # CodePipeline + CodeBuild + push trigger
+├── buildspec.yml                 # CodeBuild validation and deployment steps
 ├── src/
 │   ├── processing/
 │   │   └── preprocess.py        # Split → Scale → SMOTE pipeline
@@ -128,15 +130,11 @@ python src/deployment/deploy_endpoint.py
 - [x] Phase 5B: CloudWatch metrics-custom namespace with model metrics
 - [x] Phase 5C: Model deployment + Model Monitor baseline
 - [x] Phase 6: Full IaC-single deploy.sh command, EventBridge fix
-- [ ] Phase 7: CI/CD-CodePipeline triggered by GitHub pushes
+- [x] Phase 7: CI/CD-CodePipeline triggered by GitHub pushes
 
 ---
 
 ## Repository
 
 [github.com/jmac052002/mlops-fraud-detection](https://github.com/jmac052002/mlops-fraud-detection)
-# Phase 7 complete
-
-test
-test2
 
